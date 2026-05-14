@@ -1,3 +1,5 @@
+use std::os::unix::ffi::OsStringExt as _;
+
 use anyhow::Context as _;
 
 mod actions;
@@ -30,6 +32,17 @@ async fn tokio_main(
         sync_timeout.set(sync_timeout_duration);
     }
     let notifications_handler = crate::notifications::Handler::new();
+    let tty = std::env::var_os("RBW_TTY").or_else(|| {
+        rustix::termios::ttyname(std::io::stdin(), vec![])
+            .ok()
+            .map(|p| std::ffi::OsString::from_vec(p.as_bytes().to_vec()))
+    });
+    let env_vars = std::env::vars_os()
+        .filter(|(var_name, _)| {
+            (*rbw::protocol::ENVIRONMENT_VARIABLES_OS).contains(var_name)
+        })
+        .collect();
+    let last_environment = rbw::protocol::Environment::new(tty, env_vars);
     let state =
         std::sync::Arc::new(tokio::sync::Mutex::new(crate::state::State {
             priv_key: None,
@@ -41,7 +54,7 @@ async fn tokio_main(
             notifications_handler,
             master_password_reprompt: std::collections::HashSet::new(),
             master_password_reprompt_initialized: false,
-            last_environment: rbw::protocol::Environment::default(),
+            last_environment,
             #[cfg(feature = "clipboard")]
             clipboard: arboard::Clipboard::new()
                 .inspect_err(|e| {
